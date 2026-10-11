@@ -4,6 +4,7 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
 <title>Waypoints</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 64 64%22%3E%3Crect width=%2264%22 height=%2264%22 rx=%2214%22 fill=%22%23142433%22/%3E%3Cg fill=%22none%22 stroke=%22%23E6A400%22 stroke-width=%224%22 stroke-linecap=%22round%22%3E%3Ccircle cx=%2232%22 cy=%2232%22 r=%2214%22/%3E%3Cline x1=%2232%22 y1=%226%22 x2=%2232%22 y2=%2218%22/%3E%3Cline x1=%2232%22 y1=%2246%22 x2=%2232%22 y2=%2258%22/%3E%3Cline x1=%226%22 y1=%2232%22 x2=%2218%22 y2=%2232%22/%3E%3Cline x1=%2246%22 y1=%2232%22 x2=%2258%22 y2=%2232%22/%3E%3C/g%3E%3Ccircle cx=%2232%22 cy=%2232%22 r=%223.5%22 fill=%22%23E6A400%22/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -326,6 +327,68 @@
     border-radius: var(--radius-chip);
     padding: 2px 10px;
   }
+
+  .col-folder-btn {
+    margin-left: auto;
+    width: 30px; height: 30px;
+    border-radius: 9px;
+    border: 1px solid var(--line);
+    background: var(--surface);
+    color: var(--ink-soft);
+    display: inline-flex; align-items: center; justify-content: center;
+    cursor: pointer; padding: 0;
+  }
+  .col-folder-btn:hover { color: var(--ink); border-color: var(--ink-soft); }
+  .col-folder-btn + .column-count { margin-left: 0; }
+
+  /* ---------- Folders ---------- */
+  .folder {
+    border: 1px solid var(--line);
+    border-radius: var(--radius-card);
+    background: var(--surface);
+    box-shadow: var(--shadow);
+  }
+  .folder.folder-drop { outline: 2px dashed var(--ink-soft); outline-offset: 2px; }
+  .folder-head {
+    position: relative;
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 10px 12px 14px;
+    cursor: pointer;
+    border-radius: var(--radius-card);
+    user-select: none;
+  }
+  .folder-head:focus-visible { outline: 2px solid var(--professional); outline-offset: -2px; }
+  .folder-chevron { flex-shrink: 0; color: var(--ink-soft); transition: transform .15s; }
+  .folder[data-open="true"] .folder-chevron { transform: rotate(90deg); }
+  .folder-icon { flex-shrink: 0; }
+  .folder-info { flex: 1; min-width: 0; }
+  .folder-name {
+    margin: 0; font-size: 14.5px; font-weight: 600; color: var(--ink);
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .folder-name-input {
+    width: 100%; font-family: inherit; font-size: 14.5px; font-weight: 600;
+    padding: 3px 8px; margin: -4px 0;
+    border-radius: 8px; border: 1px solid var(--professional);
+    background: var(--bg); color: var(--ink); outline: none;
+  }
+  .folder-meta { margin: 2px 0 0; font-size: 12px; color: var(--ink-soft); }
+  .folder-meta .fm-done { color: var(--done); font-weight: 600; }
+  .folder-menu-btn {
+    flex-shrink: 0; width: 28px; height: 28px; border-radius: 8px;
+    border: none; background: none; color: var(--ink-soft);
+    display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+  }
+  .folder-menu-btn:hover { color: var(--ink); background: var(--bg); }
+  .folder-head .card-menu-pop { top: 44px; right: 8px; }
+  .folder-body {
+    display: flex; flex-direction: column; gap: 10px;
+    padding: 10px;
+    background: var(--bg);
+    border-top: 1px solid var(--line);
+    border-radius: 0 0 var(--radius-card) var(--radius-card);
+  }
+  .folder-empty { padding: 14px 10px; text-align: center; font-size: 13px; color: var(--ink-soft); }
 
   .card-list {
     display: flex;
@@ -659,6 +722,12 @@
     color: var(--ink-soft);
     margin-bottom: 6px;
   }
+  .field select {
+    width: 100%; font-family: inherit; font-size: 14px;
+    padding: 10px 12px; border-radius: 10px;
+    border: 1px solid var(--line); background: var(--bg); color: var(--ink); outline: none;
+  }
+  .field select:focus { border-color: var(--professional); }
   .field input[type="text"],
   .field input[type="date"],
   .field textarea {
@@ -1258,6 +1327,10 @@
           <div class="cat-option" data-cat="professional">Professional</div>
         </div>
       </div>
+      <div class="field" id="folderField" style="display:none;">
+        <label for="folderSelect">Folder <span style="font-weight:400;">(optional)</span></label>
+        <select id="folderSelect"></select>
+      </div>
       <div class="field">
         <label for="dueDateInput">Due date <span style="font-weight:400;">(optional)</span></label>
         <div class="date-input-wrap">
@@ -1370,6 +1443,11 @@
   var NOTES_KEY = "waypoints_notes_v1";
 
   var tasks = [];
+  var folders = [];            // [{id, name, category}] — jobs point to one via task.folderId
+  var FOLDERS_OPEN_KEY = "waypoints_folders_open_v1";
+  var openFolders = {};        // per-device: which folders are expanded
+  var renamingFolderId = null;
+  var currentFolderId = null;  // folder chosen in the job modal
   var editingId = null;
   var activeCat = "courses";
   var draggedId = null;
@@ -1381,6 +1459,8 @@
   function clearDropIndicators() {
     var marked = document.querySelectorAll(".drag-over-top, .drag-over-bottom");
     for (var i = 0; i < marked.length; i++) marked[i].classList.remove("drag-over-top", "drag-over-bottom");
+    var fm = document.querySelectorAll(".folder-drop");
+    for (var j = 0; j < fm.length; j++) fm[j].classList.remove("folder-drop");
   }
 
   // ---------- storage (GitHub Gist sync; local cache for offline) ----------
@@ -1414,7 +1494,7 @@
   }
 
   function snapshotData() {
-    return { app: "waypoints", version: 2, updatedAt: new Date().toISOString(), tasks: tasks, notes: notes };
+    return { app: "waypoints", version: 2, updatedAt: new Date().toISOString(), tasks: tasks, notes: notes, folders: folders };
   }
   function writeCache() { lsSet(CACHE_KEY, JSON.stringify(snapshotData())); }
   function readCache() {
@@ -1424,10 +1504,10 @@
   // Accepts this app's format or the old localStorage backup ({"waypoints_tasks_v1": "...", ...}).
   function parseBackup(obj) {
     if (!obj || typeof obj !== "object") return null;
-    if (Array.isArray(obj.tasks)) return { tasks: obj.tasks, notes: Array.isArray(obj.notes) ? obj.notes : [] };
+    if (Array.isArray(obj.tasks)) return { tasks: obj.tasks, notes: Array.isArray(obj.notes) ? obj.notes : [], folders: Array.isArray(obj.folders) ? obj.folders : [] };
     if (typeof obj.waypoints_tasks_v1 === "string") {
       try {
-        return { tasks: JSON.parse(obj.waypoints_tasks_v1), notes: obj.waypoints_notes_v1 ? JSON.parse(obj.waypoints_notes_v1) : [] };
+        return { tasks: JSON.parse(obj.waypoints_tasks_v1), notes: obj.waypoints_notes_v1 ? JSON.parse(obj.waypoints_notes_v1) : [], folders: [] };
       } catch(e) { return null; }
     }
     return null;
@@ -1476,13 +1556,15 @@
     if (!parsed) return;
     var changedTasks = JSON.stringify(parsed.tasks) !== JSON.stringify(tasks);
     var changedNotes = JSON.stringify(parsed.notes) !== JSON.stringify(notes);
-    if (!changedTasks && !changedNotes) return;
+    var changedFolders = JSON.stringify(parsed.folders) !== JSON.stringify(folders);
+    if (!changedTasks && !changedNotes && !changedFolders) return;
     tasks = parsed.tasks;
+    folders = parsed.folders;
     var typing = notesEditor.contains(document.activeElement);
     notes = parsed.notes;
     writeCache();
     if (activeNoteId && !notes.some(function(n){ return n.id === activeNoteId; })) activeNoteId = notes.length ? notes[0].id : null;
-    if (changedTasks) { if (uiIsBusy()) pendingRender = true; else render(); }
+    if (changedTasks || changedFolders) { if (uiIsBusy()) pendingRender = true; else render(); }
     if (changedNotes && notesOverlay.classList.contains("open")) {
       renderNotesSidebar();
       if (!typing) renderNotesEditor();
@@ -1573,7 +1655,7 @@
   function saveNotes(immediate) { scheduleSave(immediate ? 300 : 1500); }
 
   function uiIsBusy() {
-    return overlay.classList.contains("open") || draggedId || Object.keys(animatingTasks).some(function(k){ return animatingTasks[k]; });
+    return overlay.classList.contains("open") || draggedId || renamingFolderId || Object.keys(animatingTasks).some(function(k){ return animatingTasks[k]; });
   }
   var pendingRender = false;
   setInterval(function(){
@@ -1592,7 +1674,7 @@
         openSyncDialog();
         return null;
       }
-      return createGist({ app: "waypoints", version: 2, updatedAt: new Date().toISOString(), tasks: initial.tasks, notes: initial.notes });
+      return createGist({ app: "waypoints", version: 2, updatedAt: new Date().toISOString(), tasks: initial.tasks, notes: initial.notes, folders: initial.folders || [] });
     }).then(function(id){
       if (!id) return;
       gistId = id; lsSet(GIST_ID_KEY, id);
@@ -1647,7 +1729,7 @@
         try { parsed = parseBackup(JSON.parse(reader.result)); } catch(err) {}
         if (!parsed) { showToast("That file isn't a Waypoints backup"); return; }
         if ((tasks.length || notes.length) && !confirm("Replace the current board (" + tasks.length + " jobs, " + notes.length + " note sections) with this backup (" + parsed.tasks.length + " jobs, " + parsed.notes.length + " note sections)?")) return;
-        tasks = parsed.tasks; notes = parsed.notes;
+        tasks = parsed.tasks; notes = parsed.notes; folders = parsed.folders;
         activeNoteId = null;
         render();
         writeCache();
@@ -1682,7 +1764,7 @@
     ghToken = lsGet(TOKEN_KEY);
     gistId = lsGet(GIST_ID_KEY);
     var cached = readCache();
-    if (cached) { tasks = cached.tasks; notes = cached.notes || []; }
+    if (cached) { tasks = cached.tasks; notes = cached.notes || []; folders = cached.folders || []; }
     if (!ghToken) { setSyncStatus("setup"); render(); openSyncDialog(); return; }
     render();
     connect();
@@ -1691,6 +1773,8 @@
   function load() {
     tasks = [];
     notes = [];
+    folders = [];
+    try { openFolders = JSON.parse(lsGet(FOLDERS_OPEN_KEY) || "{}") || {}; } catch(e) { openFolders = {}; }
     var theme = "light";
     try {
       theme = localStorage.getItem(THEME_KEY) ||
@@ -1726,6 +1810,21 @@
     if (!query) return true;
     return (t.title.toLowerCase().indexOf(query) > -1) || (t.notes && t.notes.toLowerCase().indexOf(query) > -1);
   }
+
+  // A job's folder, or null when it's unfiled (or points at a missing/other-section folder).
+  function folderOf(t) {
+    if (!t.folderId) return null;
+    for (var i = 0; i < folders.length; i++) {
+      if (folders[i].id === t.folderId) return folders[i].category === t.category ? folders[i] : null;
+    }
+    return null;
+  }
+  function folderStats(f) {
+    var inside = tasks.filter(function(t){ return folderOf(t) === f; });
+    var done = inside.filter(isTaskComplete).length;
+    return { total: inside.length, done: done, open: inside.length - done };
+  }
+  function saveOpenFolders() { lsSet(FOLDERS_OPEN_KEY, JSON.stringify(openFolders)); }
 
   function getColumnItems(catKey, query) {
     var filtered = tasks.filter(function(t){ return t.category === catKey && taskMatchesQuery(t, query); });
@@ -1770,18 +1869,38 @@
 
       var items = getColumnItems(cat.key, query);
 
+      var folderBtn = document.createElement("button");
+      folderBtn.type = "button";
+      folderBtn.className = "col-folder-btn";
+      folderBtn.title = "New folder in " + cat.label;
+      folderBtn.setAttribute("aria-label", "New folder in " + cat.label);
+      folderBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>';
+      folderBtn.addEventListener("click", function(){ createFolder(cat.key); });
+      head.appendChild(folderBtn);
+
       var countBadge = document.createElement("span");
       countBadge.className = "column-count";
       countBadge.textContent = items.length;
       head.appendChild(countBadge);
 
-      if (items.length === 0) {
+      var catFolders = folders.filter(function(f){ return f.category === cat.key; });
+      var shownFolders = catFolders.filter(function(f){
+        if (!query) return true;
+        return items.some(function(t){ return folderOf(t) === f; });
+      });
+      var unfiled = items.filter(function(t){ return !folderOf(t); });
+
+      if (items.length === 0 && shownFolders.length === 0) {
         var empty = document.createElement("div");
         empty.className = "empty-col";
         empty.textContent = query ? "No matches here." : (syncMode === "connecting" ? "Loading…" : "Nothing queued — add a job to start tracking.");
         list.appendChild(empty);
       } else {
-        items.forEach(function(t){ list.appendChild(renderCard(t, cat)); });
+        shownFolders.forEach(function(f){
+          var inFolder = items.filter(function(t){ return folderOf(t) === f; });
+          list.appendChild(renderFolder(f, cat, inFolder, !!query));
+        });
+        unfiled.forEach(function(t){ list.appendChild(renderCard(t, cat)); });
       }
 
       list.addEventListener("dragover", function(e){ e.preventDefault(); });
@@ -1791,10 +1910,11 @@
         if (!draggedId) return;
         var draggedTask = tasks.filter(function(x){ return x.id === draggedId; })[0];
         if (!draggedTask || draggedTask.category !== cat.key) return;
-        if (items.length === 0) return;
-        var lastItem = items[items.length - 1];
-        if (lastItem.id === draggedId) return;
-        reorderTasks(draggedId, lastItem.id, true);
+        // Dropping on empty space in the section takes the job out of its folder.
+        var lastItem = unfiled.filter(function(x){ return x.id !== draggedId; }).pop();
+        if (!folderOf(draggedTask) && (!lastItem || unfiled[unfiled.length - 1].id === draggedId)) return;
+        draggedTask.folderId = null;
+        if (lastItem) reorderTasks(draggedId, lastItem.id, true);
         save();
         render();
       });
@@ -1807,6 +1927,197 @@
     if (typeof calendarPop !== "undefined" && calendarPop && calendarPop.classList.contains("open")) {
       renderCalendar();
     }
+  }
+
+  function createFolder(catKey) {
+    var f = { id: uid(), name: "New folder", category: catKey };
+    folders.push(f);
+    openFolders[f.id] = true;
+    saveOpenFolders();
+    renamingFolderId = f.id;
+    save();
+    render();
+  }
+
+  function deleteFolder(id) {
+    var idx = folders.findIndex(function(f){ return f.id === id; });
+    if (idx === -1) return;
+    var removed = folders[idx];
+    var memberIds = tasks.filter(function(t){ return t.folderId === id; }).map(function(t){ return t.id; });
+    folders.splice(idx, 1);
+    tasks.forEach(function(t){ if (t.folderId === id) t.folderId = null; });
+    save();
+    render();
+    showToast("Folder deleted — jobs are back in the section", function(){
+      folders.splice(Math.min(idx, folders.length), 0, removed);
+      tasks.forEach(function(t){ if (memberIds.indexOf(t.id) > -1) t.folderId = id; });
+      save();
+      render();
+    });
+  }
+
+  function openFolderMenu(f, headEl) {
+    var wasOpen = !!headEl.querySelector(".card-menu-pop");
+    closeAnyMenu();
+    if (wasOpen) return;
+    var pop = document.createElement("div");
+    pop.className = "card-menu-pop";
+    var renameBtn = document.createElement("button");
+    renameBtn.textContent = "Rename";
+    renameBtn.addEventListener("click", function(e){
+      e.stopPropagation();
+      closeAnyMenu();
+      renamingFolderId = f.id;
+      render();
+    });
+    var delBtn = document.createElement("button");
+    delBtn.className = "danger";
+    delBtn.textContent = "Delete folder";
+    delBtn.addEventListener("click", function(e){
+      e.stopPropagation();
+      closeAnyMenu();
+      deleteFolder(f.id);
+    });
+    pop.appendChild(renameBtn);
+    pop.appendChild(delBtn);
+    headEl.appendChild(pop);
+  }
+
+  function renderFolder(f, cat, inFolder, searching) {
+    var stats = folderStats(f);
+    var isOpen = !!openFolders[f.id] || searching || renamingFolderId === f.id;
+
+    var el = document.createElement("div");
+    el.className = "folder";
+    el.setAttribute("data-open", isOpen ? "true" : "false");
+
+    var head = document.createElement("div");
+    head.className = "folder-head";
+    head.setAttribute("role", "button");
+    head.setAttribute("tabindex", "0");
+    head.setAttribute("aria-expanded", isOpen ? "true" : "false");
+
+    var NS = 'xmlns="http://www.w3.org/2000/svg"';
+    head.insertAdjacentHTML("beforeend",
+      '<svg class="folder-chevron" ' + NS + ' width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>' +
+      '<svg class="folder-icon" ' + NS + ' width="18" height="18" viewBox="0 0 24 24" fill="' + cat.color + '" fill-opacity=".18" stroke="' + cat.color + '" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>');
+
+    var info = document.createElement("div");
+    info.className = "folder-info";
+
+    if (renamingFolderId === f.id) {
+      var input = document.createElement("input");
+      input.type = "text";
+      input.className = "folder-name-input";
+      input.value = f.name;
+      input.maxLength = 40;
+      input.setAttribute("aria-label", "Folder name");
+      var finished = false;
+      function finish(commit) {
+        if (finished) return;
+        finished = true;
+        renamingFolderId = null;
+        var target = folders.filter(function(x){ return x.id === f.id; })[0];
+        var name = input.value.trim();
+        if (commit && target && name && name !== target.name) { target.name = name; save(); }
+        render();
+      }
+      input.addEventListener("keydown", function(e){
+        e.stopPropagation();
+        if (e.key === "Enter") { e.preventDefault(); finish(true); }
+        else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+      });
+      input.addEventListener("blur", function(){ finish(true); });
+      input.addEventListener("click", function(e){ e.stopPropagation(); });
+      info.appendChild(input);
+      setTimeout(function(){ input.focus(); input.select(); }, 0);
+    } else {
+      var nameEl = document.createElement("p");
+      nameEl.className = "folder-name";
+      nameEl.textContent = f.name;
+      nameEl.title = f.name;
+      info.appendChild(nameEl);
+    }
+
+    var meta = document.createElement("p");
+    meta.className = "folder-meta";
+    if (stats.total === 0) {
+      meta.textContent = "Empty";
+    } else {
+      meta.innerHTML = stats.total + (stats.total === 1 ? " job" : " jobs") +
+        ' · <span class="fm-done">' + stats.done + ' done</span> · ' + stats.open + ' open';
+    }
+    info.appendChild(meta);
+    head.appendChild(info);
+
+    var menuBtn = document.createElement("button");
+    menuBtn.type = "button";
+    menuBtn.className = "folder-menu-btn";
+    menuBtn.title = "Rename or delete folder";
+    menuBtn.setAttribute("aria-label", "Folder options");
+    menuBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="19" r="1.2"/></svg>';
+    menuBtn.addEventListener("click", function(e){ e.stopPropagation(); openFolderMenu(f, head); });
+    head.appendChild(menuBtn);
+    el.appendChild(head);
+
+    function toggle() {
+      if (renamingFolderId === f.id || searching) return;
+      openFolders[f.id] = !openFolders[f.id];
+      saveOpenFolders();
+      var nowOpen = !!openFolders[f.id];
+      el.setAttribute("data-open", nowOpen ? "true" : "false");
+      head.setAttribute("aria-expanded", nowOpen ? "true" : "false");
+      if (nowOpen) render(); else { var b = el.querySelector(".folder-body"); if (b) b.remove(); }
+    }
+    head.addEventListener("click", toggle);
+    head.addEventListener("keydown", function(e){
+      if (e.target !== head) return;
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); }
+    });
+
+    if (isOpen) {
+      var body = document.createElement("div");
+      body.className = "folder-body";
+      if (inFolder.length === 0) {
+        var hint = document.createElement("div");
+        hint.className = "folder-empty";
+        hint.textContent = stats.total === 0 ? "Drag jobs here, or pick this folder when editing a job." : "No matches in this folder.";
+        body.appendChild(hint);
+      } else {
+        inFolder.forEach(function(t){ body.appendChild(renderCard(t, cat)); });
+      }
+      el.appendChild(body);
+    }
+
+    // Drop a job on the folder to file it.
+    el.addEventListener("dragover", function(e){
+      if (!draggedId) return;
+      var dt = tasks.filter(function(x){ return x.id === draggedId; })[0];
+      if (!dt || dt.category !== f.category) return;
+      e.preventDefault();
+      el.classList.add("folder-drop");
+    });
+    el.addEventListener("dragleave", function(e){
+      if (!el.contains(e.relatedTarget)) el.classList.remove("folder-drop");
+    });
+    el.addEventListener("drop", function(e){
+      e.preventDefault();
+      e.stopPropagation();
+      el.classList.remove("folder-drop");
+      if (!draggedId) return;
+      var dt = tasks.filter(function(x){ return x.id === draggedId; })[0];
+      if (!dt || dt.category !== f.category) return;
+      if (dt.folderId === f.id) return;
+      dt.folderId = f.id;
+      var last = tasks.filter(function(x){ return x.id !== dt.id && folderOf(x) === f; }).pop();
+      if (last) reorderTasks(dt.id, last.id, true);
+      openFolders[f.id] = true;
+      saveOpenFolders();
+      save();
+      render();
+    });
+
+    return el;
   }
 
   function renderCard(t, cat) {
@@ -1980,6 +2291,8 @@
       if (!draggedTask || draggedTask.category !== t.category) return;
       var rect = card.getBoundingClientRect();
       var before = (e.clientY - rect.top) < rect.height / 2;
+      var targetFolder = folderOf(t);
+      draggedTask.folderId = targetFolder ? targetFolder.id : null;
       reorderTasks(draggedId, t.id, !before);
       save();
       render();
@@ -2084,6 +2397,27 @@
   var notesInput = document.getElementById("notesInput");
   var dueDateInput = document.getElementById("dueDateInput");
   var catPicker = document.getElementById("catPicker");
+  var folderField = document.getElementById("folderField");
+  var folderSelect = document.getElementById("folderSelect");
+
+  function renderFolderSelect() {
+    var list = folders.filter(function(f){ return f.category === activeCat; });
+    folderSelect.innerHTML = "";
+    var none = document.createElement("option");
+    none.value = ""; none.textContent = "No folder";
+    folderSelect.appendChild(none);
+    list.forEach(function(f){
+      var o = document.createElement("option");
+      o.value = f.id; o.textContent = f.name;
+      folderSelect.appendChild(o);
+    });
+    folderSelect.value = list.some(function(f){ return f.id === currentFolderId; }) ? currentFolderId : "";
+    folderField.style.display = list.length ? "" : "none";
+  }
+  folderSelect.addEventListener("change", function(){ currentFolderId = folderSelect.value || null; });
+  function validFolderId() {
+    return folders.some(function(f){ return f.id === currentFolderId && f.category === activeCat; }) ? currentFolderId : null;
+  }
   var stageEditList = document.getElementById("stageEditList");
   var importantSwitch = document.getElementById("importantSwitch");
   var currentStages = [];
@@ -2104,10 +2438,12 @@
     notesInput.value = task ? (task.notes || "") : "";
     dueDateInput.value = task && task.dueDate ? task.dueDate : "";
     activeCat = task ? task.category : "courses";
+    currentFolderId = task && task.folderId ? task.folderId : null;
     setImportantSwitch(task ? !!task.important : false);
     currentStages = task ? task.stages.map(function(s){ return { _key: uid(), name: s.name, state: s.state, date: s.date }; })
                           : DEFAULT_STAGES.map(function(n){ return { _key: uid(), name: n, state: "pending", date: null }; });
     renderCatPicker();
+    renderFolderSelect();
     renderStageEditor();
     overlay.classList.add("open");
     setTimeout(function(){ titleInput.focus(); }, 50);
@@ -2129,6 +2465,7 @@
     if (!opt) return;
     activeCat = opt.getAttribute("data-cat");
     renderCatPicker();
+    renderFolderSelect();
   });
 
   function reorderCurrentStages(draggedKey, targetKey, after) {
@@ -2235,6 +2572,7 @@
       t.notes = notesInput.value.trim();
       t.dueDate = dueDateInput.value || null;
       t.category = activeCat;
+      t.folderId = validFolderId();
       t.stages = cleanStages;
       t.important = currentImportant;
       if (currentImportant && !wasImportant) {
@@ -2254,6 +2592,7 @@
         notes: notesInput.value.trim(),
         dueDate: dueDateInput.value || null,
         category: activeCat,
+        folderId: validFolderId(),
         important: currentImportant,
         dateAdded: todayStr(),
         stages: cleanStages
