@@ -283,7 +283,7 @@
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 18px;
-    align-items: start;
+    align-items: stretch;
   }
 
   @media (max-width: 900px) {
@@ -294,6 +294,8 @@
   .column {
     background: transparent;
     min-width: 0;
+    display: flex;
+    flex-direction: column;
   }
 
   .column-head {
@@ -349,6 +351,11 @@
     box-shadow: var(--shadow);
   }
   .folder.folder-drop { outline: 2px dashed var(--ink-soft); outline-offset: 2px; }
+  .folder.dragging { opacity: .45; }
+  .folder.drag-over-top { box-shadow: 0 -3px 0 0 var(--professional); }
+  .folder.drag-over-bottom { box-shadow: 0 3px 0 0 var(--professional); }
+  .folder-body .folder { box-shadow: none; }
+  .folder-head .card-menu-pop { min-width: 168px; }
   .folder-head {
     position: relative;
     display: flex; align-items: center; gap: 10px;
@@ -395,6 +402,8 @@
     flex-direction: column;
     gap: 12px;
     min-height: 60px;
+    flex: 1 1 auto;
+    padding-bottom: 28px;   /* empty space at the bottom of a section is a drop zone */
   }
 
   .empty-col {
@@ -900,6 +909,18 @@
     box-shadow: inset 0 -3px 0 0 var(--professional), var(--shadow);
   }
   .card-menu-btn, .stage-chip { cursor: pointer; }
+
+  /* ---------- Finished jobs: compact until opened ---------- */
+  .card.card-done { padding: 12px 16px; }
+  .done-meta {
+    display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    margin-top: 5px;
+  }
+  .done-dates { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; color: var(--ink-soft); min-width: 0; }
+  .done-meta .stage-toggle { margin-top: 0; flex-shrink: 0; }
+  .card-done:not(.done-open) .card-notes,
+  .card-done:not(.done-open) .progress-track,
+  .card-done:not(.done-open) .stage-wrap { display: none; }
 
   .card-dates span.overdue {
     color: var(--cancelled);
@@ -1451,6 +1472,8 @@
   var editingId = null;
   var activeCat = "courses";
   var draggedId = null;
+  var draggedFolderId = null;
+  var openDoneTasks = {};   // finished jobs whose stages are showing
   var seenTaskIds = {};
   var expandedStageTasks = {};
   var notes = [];
@@ -1655,7 +1678,7 @@
   function saveNotes(immediate) { scheduleSave(immediate ? 300 : 1500); }
 
   function uiIsBusy() {
-    return overlay.classList.contains("open") || draggedId || renamingFolderId || Object.keys(animatingTasks).some(function(k){ return animatingTasks[k]; });
+    return overlay.classList.contains("open") || draggedId || draggedFolderId || renamingFolderId || Object.keys(animatingTasks).some(function(k){ return animatingTasks[k]; });
   }
   var pendingRender = false;
   setInterval(function(){
@@ -1811,20 +1834,142 @@
     return (t.title.toLowerCase().indexOf(query) > -1) || (t.notes && t.notes.toLowerCase().indexOf(query) > -1);
   }
 
-  // A job's folder, or null when it's unfiled (or points at a missing/other-section folder).
-  function folderOf(t) {
-    if (!t.folderId) return null;
-    for (var i = 0; i < folders.length; i++) {
-      if (folders[i].id === t.folderId) return folders[i].category === t.category ? folders[i] : null;
-    }
+  // ---------- folders: structure helpers ----------
+  var MAX_FOLDER_DEPTH = 3;
+
+  function folderById(id) {
+    if (!id) return null;
+    for (var i = 0; i < folders.length; i++) if (folders[i].id === id) return folders[i];
     return null;
   }
+  // The folder this folder sits in (null = top level of its section).
+  function parentOf(f) {
+    var p = folderById(f.parentId);
+    return (p && p !== f && p.category === f.category) ? p : null;
+  }
+  // A job's folder, or null when it's unfiled (or points at a missing / other-section folder).
+  function folderOf(t) {
+    var f = folderById(t.folderId);
+    return (f && f.category === t.category) ? f : null;
+  }
+  // How many jobs sit above a folder inside its container.
+  function folderSlot(f) { return (typeof f.slot === "number" && f.slot >= 0) ? f.slot : 0; }
+
+  function subFoldersOf(parent, catKey) {
+    var list = [];
+    folders.forEach(function(f, i){
+      if (f.category === catKey && parentOf(f) === parent) list.push({ f: f, i: i });
+    });
+    list.sort(function(a, b){ return (folderSlot(a.f) - folderSlot(b.f)) || (a.i - b.i); });
+    return list.map(function(x){ return x.f; });
+  }
+  function descendantsOf(f) {
+    var out = [], seen = {};
+    (function walk(p, lvl){
+      if (lvl > 12) return;
+      folders.forEach(function(c){
+        if (!seen[c.id] && c !== f && parentOf(c) === p) { seen[c.id] = true; out.push(c); walk(c, lvl + 1); }
+      });
+    })(f, 0);
+    return out;
+  }
+  function isInside(f, ancestor) {      // f is `ancestor` or somewhere within it
+    for (var p = f, n = 0; p && n < 12; p = parentOf(p), n++) if (p === ancestor) return true;
+    return false;
+  }
+  function folderDepth(f) { var d = 0; for (var p = f; p && d < 12; p = parentOf(p)) d++; return d; }
+  function folderHeight(f) {
+    var h = 1;
+    (function walk(p, lvl){
+      if (lvl > 12) return;
+      folders.forEach(function(c){ if (c !== p && parentOf(c) === p) { h = Math.max(h, lvl + 1); walk(c, lvl + 1); } });
+    })(f, 1);
+    return h;
+  }
   function folderStats(f) {
-    var inside = tasks.filter(function(t){ return folderOf(t) === f; });
+    var ids = [f].concat(descendantsOf(f));
+    var inside = tasks.filter(function(t){ return ids.indexOf(folderOf(t)) > -1; });
     var done = inside.filter(isTaskComplete).length;
-    return { total: inside.length, done: done, open: inside.length - done };
+    return { total: inside.length, done: done, open: inside.length - done, subs: ids.length - 1 };
+  }
+  function folderHasMatch(f, items) {
+    var ids = [f].concat(descendantsOf(f));
+    return items.some(function(t){ return ids.indexOf(folderOf(t)) > -1; });
   }
   function saveOpenFolders() { lsSet(FOLDERS_OPEN_KEY, JSON.stringify(openFolders)); }
+
+  // One container (a section, or a folder) as a single list: its subfolders and jobs, in display order.
+  function entriesFor(parent, catKey, items) {
+    var subs = subFoldersOf(parent, catKey);
+    var jobs = items.filter(function(t){ return folderOf(t) === parent; });
+    var out = [], ji = 0;
+    subs.forEach(function(f){
+      var upto = Math.min(folderSlot(f), jobs.length);
+      while (ji < upto) out.push({ kind: "job", t: jobs[ji++] });
+      out.push({ kind: "folder", f: f });
+    });
+    while (ji < jobs.length) out.push({ kind: "job", t: jobs[ji++] });
+    return out;
+  }
+  function fullEntries(parent, catKey) { return entriesFor(parent, catKey, getColumnItems(catKey, "")); }
+
+  // Save a container's new order: each folder remembers how many jobs are above it,
+  // and sibling folders are re-sequenced to match.
+  function commitOrder(list) {
+    var jobsAbove = 0, ordered = [];
+    list.forEach(function(e){
+      if (e.kind === "job") jobsAbove++;
+      else { e.f.slot = jobsAbove; ordered.push(e.f); }
+    });
+    var k = 0;
+    folders = folders.map(function(f){ return ordered.indexOf(f) > -1 ? ordered[k++] : f; });
+  }
+
+  // Put folder f inside `dest` (null = top of its section), before/after an anchor entry, or at the start/end.
+  function moveFolder(f, dest, anchor, where) {
+    if (!f) return false;
+    if (dest && (dest.category !== f.category || isInside(dest, f))) return false;
+    if ((dest ? folderDepth(dest) : 0) + folderHeight(f) > MAX_FOLDER_DEPTH) {
+      showToast("Folders can only go " + MAX_FOLDER_DEPTH + " levels deep");
+      return false;
+    }
+    var list = fullEntries(dest, f.category).filter(function(e){ return !(e.kind === "folder" && e.f === f); });
+    var idx = list.length;
+    if (where === "start") idx = 0;
+    else if (anchor) {
+      var ai = -1;
+      list.forEach(function(e, i){
+        if ((anchor.kind === "folder" && e.kind === "folder" && e.f === anchor.f) ||
+            (anchor.kind === "job" && e.kind === "job" && e.t === anchor.t)) ai = i;
+      });
+      if (ai > -1) idx = where === "after" ? ai + 1 : ai;
+    }
+    f.parentId = dest ? dest.id : null;
+    list.splice(idx, 0, { kind: "folder", f: f });
+    commitOrder(list);
+    save();
+    render();
+    return true;
+  }
+
+  function folderIndex(f) {
+    var list = fullEntries(parentOf(f), f.category), i = -1;
+    list.forEach(function(e, k){ if (e.kind === "folder" && e.f === f) i = k; });
+    return { i: i, n: list.length, list: list };
+  }
+  function stepFolder(f, dir) {
+    var info = folderIndex(f), j = info.i + dir;
+    if (info.i < 0 || j < 0 || j >= info.n) return;
+    var item = info.list.splice(info.i, 1)[0];
+    info.list.splice(j, 0, item);
+    commitOrder(info.list);
+    save();
+    render();
+  }
+  function moveFolderOut(f) {
+    var p = parentOf(f);
+    if (p) moveFolder(f, parentOf(p), { kind: "folder", f: p }, "after");
+  }
 
   function getColumnItems(catKey, query) {
     var filtered = tasks.filter(function(t){ return t.category === catKey && taskMatchesQuery(t, query); });
@@ -1854,7 +1999,7 @@
   }
   function dragScrollTick() {
     dragScrollRaf = null;
-    if (!draggedId || dragY === null) return;
+    if (!(draggedId || draggedFolderId) || dragY === null) return;
     var bar = document.querySelector(".topbar");
     var topEdge = bar ? bar.getBoundingClientRect().bottom : 0;   // the sticky header covers the top of the page
     var zone = 110, maxSpeed = 26, speed = 0;
@@ -1867,12 +2012,12 @@
     dragScrollRaf = requestAnimationFrame(dragScrollTick);
   }
   document.addEventListener("dragover", function(e){
-    if (!draggedId) return;
+    if (!draggedId && !draggedFolderId) return;
     dragY = e.clientY;
     if (!dragScrollRaf) dragScrollRaf = requestAnimationFrame(dragScrollTick);
-  });
-  document.addEventListener("dragend", dragScrollStop);
-  document.addEventListener("drop", dragScrollStop);
+  }, true);   // capture phase: card/folder handlers stop propagation, but this must still see every dragover
+  document.addEventListener("dragend", dragScrollStop, true);
+  document.addEventListener("drop", dragScrollStop, true);
 
   // ---------- rendering ----------
   var board = document.getElementById("board");
@@ -1903,7 +2048,7 @@
       folderBtn.title = "New folder in " + cat.label;
       folderBtn.setAttribute("aria-label", "New folder in " + cat.label);
       folderBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="9" y1="14" x2="15" y2="14"/></svg>';
-      folderBtn.addEventListener("click", function(){ createFolder(cat.key); });
+      folderBtn.addEventListener("click", function(){ createFolder(cat.key, null); });
       head.appendChild(folderBtn);
 
       var countBadge = document.createElement("span");
@@ -1911,34 +2056,37 @@
       countBadge.textContent = items.length;
       head.appendChild(countBadge);
 
-      var catFolders = folders.filter(function(f){ return f.category === cat.key; });
-      var shownFolders = catFolders.filter(function(f){
-        if (!query) return true;
-        return items.some(function(t){ return folderOf(t) === f; });
-      });
       var unfiled = items.filter(function(t){ return !folderOf(t); });
+      var rootEntries = entriesFor(null, cat.key, items).filter(function(e){
+        return e.kind === "job" || !query || folderHasMatch(e.f, items);
+      });
 
-      if (items.length === 0 && shownFolders.length === 0) {
+      if (rootEntries.length === 0) {
         var empty = document.createElement("div");
         empty.className = "empty-col";
         empty.textContent = query ? "No matches here." : (syncMode === "connecting" ? "Loading…" : "Nothing queued — add a job to start tracking.");
         list.appendChild(empty);
       } else {
-        shownFolders.forEach(function(f){
-          var inFolder = items.filter(function(t){ return folderOf(t) === f; });
-          list.appendChild(renderFolder(f, cat, inFolder, !!query));
+        rootEntries.forEach(function(e){
+          list.appendChild(e.kind === "folder" ? renderFolder(e.f, cat, items, !!query, 1) : renderCard(e.t, cat));
         });
-        unfiled.forEach(function(t){ list.appendChild(renderCard(t, cat)); });
       }
 
       list.addEventListener("dragover", function(e){ e.preventDefault(); });
       list.addEventListener("drop", function(e){
         if (e.target !== list) return;
         e.preventDefault();
+        clearDropIndicators();
+        // A folder dropped on empty space goes to the bottom of the section (out of any folder).
+        if (draggedFolderId) {
+          var df = folderById(draggedFolderId);
+          if (df && df.category === cat.key) moveFolder(df, null, null, "end");
+          return;
+        }
         if (!draggedId) return;
         var draggedTask = tasks.filter(function(x){ return x.id === draggedId; })[0];
         if (!draggedTask || draggedTask.category !== cat.key) return;
-        // Dropping on empty space in the section takes the job out of its folder.
+        // A job dropped on empty space is taken out of its folder.
         var lastItem = unfiled.filter(function(x){ return x.id !== draggedId; }).pop();
         if (!folderOf(draggedTask) && (!lastItem || unfiled[unfiled.length - 1].id === draggedId)) return;
         draggedTask.folderId = null;
@@ -1957,9 +2105,11 @@
     }
   }
 
-  function createFolder(catKey) {
-    var f = { id: uid(), name: "New folder", category: catKey };
+  function createFolder(catKey, parent) {
+    if (parent && folderDepth(parent) >= MAX_FOLDER_DEPTH) { showToast("Folders can only go " + MAX_FOLDER_DEPTH + " levels deep"); return; }
+    var f = { id: uid(), name: "New folder", category: catKey, parentId: parent ? parent.id : null, slot: parent ? 1000000 : 0 };
     folders.push(f);
+    if (parent) openFolders[parent.id] = true;
     openFolders[f.id] = true;
     saveOpenFolders();
     renamingFolderId = f.id;
@@ -1967,18 +2117,24 @@
     render();
   }
 
+  // Deleting a folder never deletes jobs: its jobs and subfolders move up one level.
   function deleteFolder(id) {
     var idx = folders.findIndex(function(f){ return f.id === id; });
     if (idx === -1) return;
     var removed = folders[idx];
-    var memberIds = tasks.filter(function(t){ return t.folderId === id; }).map(function(t){ return t.id; });
+    var parent = parentOf(removed);
+    var parentId = parent ? parent.id : null;
+    var memberJobs = tasks.filter(function(t){ return t.folderId === id; }).map(function(t){ return t.id; });
+    var subs = folders.filter(function(c){ return c.parentId === id; }).map(function(c){ return { id: c.id, slot: c.slot }; });
     folders.splice(idx, 1);
-    tasks.forEach(function(t){ if (t.folderId === id) t.folderId = null; });
+    tasks.forEach(function(t){ if (t.folderId === id) t.folderId = parentId; });
+    folders.forEach(function(c){ if (c.parentId === id) { c.parentId = parentId; c.slot = folderSlot(removed); } });
     save();
     render();
-    showToast("Folder deleted — jobs are back in the section", function(){
+    showToast("Folder deleted — its contents moved up", function(){
       folders.splice(Math.min(idx, folders.length), 0, removed);
-      tasks.forEach(function(t){ if (memberIds.indexOf(t.id) > -1) t.folderId = id; });
+      tasks.forEach(function(t){ if (memberJobs.indexOf(t.id) > -1) t.folderId = id; });
+      subs.forEach(function(sv){ var c = folderById(sv.id); if (c) { c.parentId = id; c.slot = sv.slot; } });
       save();
       render();
     });
@@ -1990,28 +2146,24 @@
     if (wasOpen) return;
     var pop = document.createElement("div");
     pop.className = "card-menu-pop";
-    var renameBtn = document.createElement("button");
-    renameBtn.textContent = "Rename";
-    renameBtn.addEventListener("click", function(e){
-      e.stopPropagation();
-      closeAnyMenu();
-      renamingFolderId = f.id;
-      render();
-    });
-    var delBtn = document.createElement("button");
-    delBtn.className = "danger";
-    delBtn.textContent = "Delete folder";
-    delBtn.addEventListener("click", function(e){
-      e.stopPropagation();
-      closeAnyMenu();
-      deleteFolder(f.id);
-    });
-    pop.appendChild(renameBtn);
-    pop.appendChild(delBtn);
+    function add(label, fn, danger) {
+      var b = document.createElement("button");
+      if (danger) b.className = "danger";
+      b.textContent = label;
+      b.addEventListener("click", function(e){ e.stopPropagation(); closeAnyMenu(); fn(); });
+      pop.appendChild(b);
+    }
+    var info = folderIndex(f);
+    add("Rename", function(){ renamingFolderId = f.id; render(); });
+    if (folderDepth(f) < MAX_FOLDER_DEPTH) add("Add subfolder", function(){ createFolder(f.category, f); });
+    if (info.i > 0) add("Move up", function(){ stepFolder(f, -1); });
+    if (info.i > -1 && info.i < info.n - 1) add("Move down", function(){ stepFolder(f, 1); });
+    if (parentOf(f)) add("Move out of folder", function(){ moveFolderOut(f); });
+    add("Delete folder", function(){ deleteFolder(f.id); }, true);
     headEl.appendChild(pop);
   }
 
-  function renderFolder(f, cat, inFolder, searching) {
+  function renderFolder(f, cat, items, searching, depth) {
     var stats = folderStats(f);
     var isOpen = !!openFolders[f.id] || searching || renamingFolderId === f.id;
 
@@ -2024,6 +2176,7 @@
     head.setAttribute("role", "button");
     head.setAttribute("tabindex", "0");
     head.setAttribute("aria-expanded", isOpen ? "true" : "false");
+    head.draggable = renamingFolderId !== f.id;
 
     var NS = 'xmlns="http://www.w3.org/2000/svg"';
     head.insertAdjacentHTML("beforeend",
@@ -2041,7 +2194,7 @@
       input.maxLength = 40;
       input.setAttribute("aria-label", "Folder name");
       var finished = false;
-      function finish(commit) {
+      var finish = function(commit) {
         if (finished) return;
         finished = true;
         renamingFolderId = null;
@@ -2049,7 +2202,7 @@
         var name = input.value.trim();
         if (commit && target && name && name !== target.name) { target.name = name; save(); }
         render();
-      }
+      };
       input.addEventListener("keydown", function(e){
         e.stopPropagation();
         if (e.key === "Enter") { e.preventDefault(); finish(true); }
@@ -2070,7 +2223,7 @@
     var meta = document.createElement("p");
     meta.className = "folder-meta";
     if (stats.total === 0) {
-      meta.textContent = "Empty";
+      meta.textContent = stats.subs ? "No jobs" : "Empty";
     } else {
       meta.innerHTML = stats.total + (stats.total === 1 ? " job" : " jobs") +
         ' · <span class="fm-done">' + stats.done + ' done</span> · ' + stats.open + ' open';
@@ -2081,7 +2234,7 @@
     var menuBtn = document.createElement("button");
     menuBtn.type = "button";
     menuBtn.className = "folder-menu-btn";
-    menuBtn.title = "Rename or delete folder";
+    menuBtn.title = "Folder options";
     menuBtn.setAttribute("aria-label", "Folder options");
     menuBtn.innerHTML = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="5" r="1.2"/><circle cx="12" cy="12" r="1.2"/><circle cx="12" cy="19" r="1.2"/></svg>';
     menuBtn.addEventListener("click", function(e){ e.stopPropagation(); openFolderMenu(f, head); });
@@ -2095,7 +2248,7 @@
       var nowOpen = !!openFolders[f.id];
       el.setAttribute("data-open", nowOpen ? "true" : "false");
       head.setAttribute("aria-expanded", nowOpen ? "true" : "false");
-      if (nowOpen) render(); else { var b = el.querySelector(".folder-body"); if (b) b.remove(); }
+      if (nowOpen) render(); else { var b = el.querySelector(":scope > .folder-body"); if (b) b.remove(); }
     }
     head.addEventListener("click", toggle);
     head.addEventListener("keydown", function(e){
@@ -2106,32 +2259,87 @@
     if (isOpen) {
       var body = document.createElement("div");
       body.className = "folder-body";
-      if (inFolder.length === 0) {
+      var entries = depth < 8 ? entriesFor(f, cat.key, items).filter(function(e){
+        return e.kind === "job" || !searching || folderHasMatch(e.f, items);
+      }) : [];
+      if (entries.length === 0) {
         var hint = document.createElement("div");
         hint.className = "folder-empty";
-        hint.textContent = stats.total === 0 ? "Drag jobs here, or pick this folder when editing a job." : "No matches in this folder.";
+        hint.textContent = searching ? "No matches in this folder." : "Drag jobs or folders here, or pick this folder when editing a job.";
         body.appendChild(hint);
       } else {
-        inFolder.forEach(function(t){ body.appendChild(renderCard(t, cat)); });
+        entries.forEach(function(e){
+          body.appendChild(e.kind === "folder" ? renderFolder(e.f, cat, items, searching, depth + 1) : renderCard(e.t, cat));
+        });
       }
       el.appendChild(body);
     }
 
-    // Drop a job on the folder to file it.
+    // ----- dragging this folder (to reorder it, or drop it into another folder) -----
+    head.addEventListener("dragstart", function(e){
+      if (renamingFolderId === f.id) { e.preventDefault(); return; }
+      e.stopPropagation();
+      draggedFolderId = f.id;
+      el.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+      try { e.dataTransfer.setData("text/plain", f.id); } catch(err){}
+    });
+    head.addEventListener("dragend", function(){
+      el.classList.remove("dragging");
+      clearDropIndicators();
+      draggedFolderId = null;
+    });
+
+    // Where a dragged folder would land: above this one, below it, or inside it.
+    function zoneFor(e) {
+      if (!head.contains(e.target)) return "into";
+      var r = head.getBoundingClientRect(), rel = (e.clientY - r.top) / r.height;
+      if (rel < 0.28) return "before";
+      if (rel > 0.72 && !isOpen) return "after";
+      return "into";
+    }
+    function foldersTarget() {
+      var df = folderById(draggedFolderId);
+      if (!df || df.category !== f.category) return null;
+      if (df === f || isInside(f, df)) return "self";
+      return df;
+    }
+
     el.addEventListener("dragover", function(e){
+      if (draggedFolderId) {
+        var tgt = foldersTarget();
+        if (!tgt) return;
+        e.stopPropagation();
+        if (tgt === "self") return;
+        e.preventDefault();
+        var z = zoneFor(e);
+        clearDropIndicators();
+        el.classList.add(z === "before" ? "drag-over-top" : z === "after" ? "drag-over-bottom" : "folder-drop");
+        return;
+      }
       if (!draggedId) return;
       var dt = tasks.filter(function(x){ return x.id === draggedId; })[0];
       if (!dt || dt.category !== f.category) return;
       e.preventDefault();
+      e.stopPropagation();
+      clearDropIndicators();
       el.classList.add("folder-drop");
     });
     el.addEventListener("dragleave", function(e){
-      if (!el.contains(e.relatedTarget)) el.classList.remove("folder-drop");
+      if (!el.contains(e.relatedTarget)) el.classList.remove("folder-drop", "drag-over-top", "drag-over-bottom");
     });
     el.addEventListener("drop", function(e){
       e.preventDefault();
       e.stopPropagation();
-      el.classList.remove("folder-drop");
+      clearDropIndicators();
+      if (draggedFolderId) {
+        var tgt = foldersTarget();
+        if (!tgt || tgt === "self") return;
+        var z = zoneFor(e);
+        if (z === "into") moveFolder(tgt, f, null, "start");
+        else moveFolder(tgt, parentOf(f), { kind: "folder", f: f }, z);
+        return;
+      }
       if (!draggedId) return;
       var dt = tasks.filter(function(x){ return x.id === draggedId; })[0];
       if (!dt || dt.category !== f.category) return;
@@ -2150,13 +2358,13 @@
     var card = document.createElement("div");
     var isNewCard = !seenTaskIds[t.id];
     seenTaskIds[t.id] = true;
-    card.className = "card" + (isNewCard ? " card-enter" : "");
-    card.draggable = true;
-
     var doneCount = t.stages.filter(function(s){ return s.state === "done" || s.state === "cancelled"; }).length;
     var total = t.stages.length || 1;
     var pct = Math.round((doneCount / total) * 100);
     var fullyDone = isTaskComplete(t);
+    var detailsOpen = fullyDone && !!openDoneTasks[t.id];
+    card.className = "card" + (isNewCard ? " card-enter" : "") + (fullyDone ? " card-done" : "") + (detailsOpen ? " done-open" : "");
+    card.draggable = true;
 
     var top = document.createElement("div");
     top.className = "card-top";
@@ -2195,6 +2403,31 @@
     menuBtn.addEventListener("click", function(e){ e.stopPropagation(); openMenu(t, card); });
     top.appendChild(menuBtn);
     card.appendChild(top);
+
+    // Finished jobs: just the struck-through name, when it was done, and a way to open the stages.
+    if (fullyDone) {
+      var doneAt = "";
+      t.stages.forEach(function(s){ if ((s.state === "done" || s.state === "cancelled") && s.date && s.date > doneAt) doneAt = s.date; });
+      var metaRow = document.createElement("div");
+      metaRow.className = "done-meta";
+      var doneDates = document.createElement("span");
+      doneDates.className = "done-dates";
+      doneDates.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> ' +
+        (doneAt ? "Done " + formatDate(doneAt) + " · " : "") + "Added " + formatDate(t.dateAdded);
+      metaRow.appendChild(doneDates);
+      var openBtn = document.createElement("button");
+      openBtn.type = "button";
+      openBtn.className = "stage-toggle";
+      openBtn.setAttribute("aria-expanded", detailsOpen ? "true" : "false");
+      openBtn.innerHTML = '<svg class="chevron" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><polyline points="6 9 12 15 18 9"/></svg><span>' + t.stages.length + (t.stages.length === 1 ? " stage" : " stages") + '</span>';
+      openBtn.addEventListener("click", function(){
+        var nowOpen = card.classList.toggle("done-open");
+        openDoneTasks[t.id] = nowOpen;
+        openBtn.setAttribute("aria-expanded", nowOpen ? "true" : "false");
+      });
+      metaRow.appendChild(openBtn);
+      card.appendChild(metaRow);
+    }
 
     if (t.notes) {
       var notesEl = document.createElement("p");
@@ -2253,7 +2486,7 @@
     if (currentIdx === -1) currentIdx = t.stages.length - 1;
     stageWrap.style.setProperty("--stage-offset", (currentIdx * 40) + "px");
 
-    if (t.stages.length > 1) {
+    if (t.stages.length > 1 && !fullyDone) {
       var fade = document.createElement("div");
       fade.className = "stage-fade";
       stageWrap.appendChild(fade);
@@ -2263,7 +2496,7 @@
     }
     card.appendChild(stageWrap);
 
-    if (t.stages.length > 1) {
+    if (t.stages.length > 1 && !fullyDone) {
       var toggleBtn = document.createElement("button");
       toggleBtn.type = "button";
       toggleBtn.className = "stage-toggle";
@@ -2278,12 +2511,14 @@
       card.appendChild(toggleBtn);
     }
 
-    var dates = document.createElement("div");
-    dates.className = "card-dates";
-    var addedSpan = document.createElement("span");
-    addedSpan.innerHTML = calendarIcon() + " Added " + formatDate(t.dateAdded);
-    dates.appendChild(addedSpan);
-    card.appendChild(dates);
+    if (!fullyDone) {
+      var dates = document.createElement("div");
+      dates.className = "card-dates";
+      var addedSpan = document.createElement("span");
+      addedSpan.innerHTML = calendarIcon() + " Added " + formatDate(t.dateAdded);
+      dates.appendChild(addedSpan);
+      card.appendChild(dates);
+    }
 
 
     card.addEventListener("dragstart", function(e){
@@ -2298,8 +2533,20 @@
       draggedId = null;
     });
     card.addEventListener("dragover", function(e){
+      if (draggedFolderId) {
+        var dfo = folderById(draggedFolderId), tfo = folderOf(t);
+        if (!dfo || dfo.category !== t.category) return;
+        e.stopPropagation();
+        if (tfo && isInside(tfo, dfo)) return;
+        e.preventDefault();
+        var r0 = card.getBoundingClientRect();
+        clearDropIndicators();
+        card.classList.add((e.clientY - r0.top) < r0.height / 2 ? "drag-over-top" : "drag-over-bottom");
+        return;
+      }
       if (!draggedId || draggedId === t.id) return;
       e.preventDefault();
+      e.stopPropagation();
       var rect = card.getBoundingClientRect();
       var before = (e.clientY - rect.top) < rect.height / 2;
       card.classList.remove("drag-over-top", "drag-over-bottom");
@@ -2312,6 +2559,13 @@
       e.preventDefault();
       e.stopPropagation();
       card.classList.remove("drag-over-top", "drag-over-bottom");
+      if (draggedFolderId) {
+        var df2 = folderById(draggedFolderId), tf2 = folderOf(t);
+        if (!df2 || df2.category !== t.category || (tf2 && isInside(tf2, df2))) return;
+        var r2 = card.getBoundingClientRect();
+        moveFolder(df2, tf2, { kind: "job", t: t }, (e.clientY - r2.top) < r2.height / 2 ? "before" : "after");
+        return;
+      }
       if (!draggedId || draggedId === t.id) return;
       var draggedTask = tasks.filter(function(x){ return x.id === draggedId; })[0];
       if (!draggedTask || draggedTask.category !== t.category) return;
@@ -2426,18 +2680,27 @@
   var folderField = document.getElementById("folderField");
   var folderSelect = document.getElementById("folderSelect");
 
+  function folderTree(catKey) {
+    var out = [];
+    (function walk(parent, depth){
+      if (depth > MAX_FOLDER_DEPTH + 1) return;
+      subFoldersOf(parent, catKey).forEach(function(f){ out.push({ f: f, depth: depth }); walk(f, depth + 1); });
+    })(null, 0);
+    return out;
+  }
   function renderFolderSelect() {
-    var list = folders.filter(function(f){ return f.category === activeCat; });
+    var list = folderTree(activeCat);
     folderSelect.innerHTML = "";
     var none = document.createElement("option");
     none.value = ""; none.textContent = "No folder";
     folderSelect.appendChild(none);
-    list.forEach(function(f){
+    list.forEach(function(x){
       var o = document.createElement("option");
-      o.value = f.id; o.textContent = f.name;
+      o.value = x.f.id;
+      o.textContent = "\u00A0\u00A0\u00A0".repeat(x.depth) + (x.depth ? "\u21B3 " : "") + x.f.name;
       folderSelect.appendChild(o);
     });
-    folderSelect.value = list.some(function(f){ return f.id === currentFolderId; }) ? currentFolderId : "";
+    folderSelect.value = list.some(function(x){ return x.f.id === currentFolderId; }) ? currentFolderId : "";
     folderField.style.display = list.length ? "" : "none";
   }
   folderSelect.addEventListener("change", function(){ currentFolderId = folderSelect.value || null; });
