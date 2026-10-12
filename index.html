@@ -1265,6 +1265,92 @@
     display: none;
   }
 
+
+  /* ---------- Header buttons: icons exactly centred (no stray baseline gap) ---------- */
+  .icon-btn { padding: 0; line-height: 0; flex-shrink: 0; }
+  .icon-btn svg { display: block; }
+  #themeIconHolder { display: flex; align-items: center; justify-content: center; line-height: 0; }
+  .calendar-wrap { display: flex; align-items: center; }
+
+  /* ---------- Sections stacked in one column: collapsible ---------- */
+  .col-toggle { display: none; }
+  @media (max-width: 900px) {
+    /* calendar: always fully on screen, centred, scrolls inside itself if the screen is short */
+    .calendar-wrap { position: static; }
+    .calendar-pop {
+      position: fixed;
+      top: calc(64px + env(safe-area-inset-top, 0px));
+      left: 0; right: 0; margin: 0 auto;
+      width: min(360px, calc(100vw - 24px)); max-width: none;
+      max-height: calc(100vh - 84px);
+      max-height: calc(100dvh - 84px);
+      overflow-y: auto;
+    }
+    .board { gap: 12px; }
+    .column-head {
+      padding: 8px 8px 8px 10px;
+      margin-bottom: 10px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      cursor: pointer;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+    .column.collapsed .column-head { margin-bottom: 0; }
+    .col-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 30px; height: 30px; padding: 0; margin-left: -2px;
+      background: none; border: none; border-radius: 9px;
+      color: var(--ink-soft); cursor: pointer; flex-shrink: 0;
+    }
+    .col-toggle svg { transition: transform .18s ease; }
+    .column.collapsed .col-toggle svg { transform: rotate(-90deg); }
+    .column.collapsed .card-list { display: none; }
+    .card-list { padding-bottom: 6px; }
+  }
+
+  /* ---------- Phone portrait ---------- */
+  @media (max-width: 600px) {
+    .topbar { position: static; }               /* scrolls away instead of covering the screen */
+    .topbar-inner { padding: 10px 14px 6px; gap: 8px; position: relative; }
+    .brand { order: 0; flex: 1; min-width: 0; gap: 8px; }
+    .brand svg { width: 28px; height: 28px; }
+    .brand-text h1 { font-size: 18px; }
+    .topbar-controls { display: contents; }
+    .sync-status { order: 1; }
+    .calendar-wrap { order: 2; position: static; }
+    #notesBtn { order: 3; }
+    #themeToggle { order: 4; }
+    .search-box { order: 6; flex: 1 0 100%; }
+    .search-box input, .search-box input:focus { width: 100%; }
+    .icon-btn { width: 36px; height: 36px; }
+    .sync-status { width: 36px; height: 36px; padding: 0; justify-content: center; }
+
+    /* New job becomes a round button floating bottom-right */
+    #addTaskBtn {
+      position: fixed; z-index: 25;
+      right: 16px; bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+      width: 56px; height: 56px; padding: 0; justify-content: center;
+      border-radius: 50%; box-shadow: 0 6px 18px rgba(0,0,0,.28);
+    }
+    #addTaskBtn svg { width: 22px; height: 22px; }
+    #addTaskBtn .btn-label { display: none; }
+
+    /* the three counters on one line */
+    .summary { padding: 6px 14px 0; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .summary-card { padding: 8px 10px; flex-direction: column; align-items: flex-start; justify-content: center; border-radius: 12px; box-shadow: none; }
+    .summary-card .num { font-size: 20px; line-height: 1.1; }
+    .summary-card .lbl { font-size: 11px; margin-top: 1px; white-space: nowrap; }
+    .summary-ring { display: none; }
+
+    .board { padding: 12px 14px 96px; }
+
+    /* 16px inputs stop iPhones zooming the page when a field is focused */
+    .search-box input, .field input, .field textarea, .field select,
+    .stage-edit-row input, .folder-name-input, .notes-textarea { font-size: 16px; }
+  }
+
 </style>
 </head>
 <body>
@@ -1307,9 +1393,9 @@
         <button class="icon-btn" id="themeToggle" title="Toggle light / dark" aria-label="Toggle light or dark mode">
           <span id="themeIconHolder"></span>
         </button>
-        <button class="btn btn-primary" id="addTaskBtn">
+        <button class="btn btn-primary" id="addTaskBtn" aria-label="New job">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          New job
+          <span class="btn-label">New job</span>
         </button>
       </div>
     </div>
@@ -1467,6 +1553,8 @@
   var folders = [];            // [{id, name, category}] — jobs point to one via task.folderId
   var FOLDERS_OPEN_KEY = "waypoints_folders_open_v1";
   var openFolders = {};        // per-device: which folders are expanded
+  var COLS_KEY = "waypoints_cols_collapsed_v1";
+  var collapsedCols = {};      // per-device: which sections are folded up to one line
   var renamingFolderId = null;
   var currentFolderId = null;  // folder chosen in the job modal
   var editingId = null;
@@ -1798,6 +1886,7 @@
     notes = [];
     folders = [];
     try { openFolders = JSON.parse(lsGet(FOLDERS_OPEN_KEY) || "{}") || {}; } catch(e) { openFolders = {}; }
+    try { collapsedCols = JSON.parse(lsGet(COLS_KEY) || "{}") || {}; } catch(e) { collapsedCols = {}; }
     var theme = "light";
     try {
       theme = localStorage.getItem(THEME_KEY) ||
@@ -2001,7 +2090,8 @@
     dragScrollRaf = null;
     if (!(draggedId || draggedFolderId) || dragY === null) return;
     var bar = document.querySelector(".topbar");
-    var topEdge = bar ? bar.getBoundingClientRect().bottom : 0;   // the sticky header covers the top of the page
+    var pinned = bar && getComputedStyle(bar).position === "sticky";
+    var topEdge = pinned ? Math.max(0, bar.getBoundingClientRect().bottom) : 0;   // a pinned header covers the top of the page
     var zone = 110, maxSpeed = 26, speed = 0;
     if (dragY < topEdge + zone) {
       speed = -maxSpeed * Math.min(1, (topEdge + zone - dragY) / zone);
@@ -2056,6 +2146,35 @@
       countBadge.textContent = items.length;
       head.appendChild(countBadge);
 
+      // Fold the whole section up to its header line (single-column layouts only; search always shows everything).
+      var colToggle = document.createElement("button");
+      colToggle.type = "button";
+      colToggle.className = "col-toggle";
+      colToggle.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>';
+      head.appendChild(colToggle);
+      var folded = !query && !!collapsedCols[cat.key];
+      col.classList.toggle("collapsed", folded);
+      function syncToggle() {
+        var isFolded = col.classList.contains("collapsed");
+        colToggle.setAttribute("aria-expanded", isFolded ? "false" : "true");
+        colToggle.setAttribute("aria-label", (isFolded ? "Expand " : "Collapse ") + cat.label);
+        colToggle.title = (isFolded ? "Expand " : "Collapse ") + cat.label;
+      }
+      syncToggle();
+      function toggleSection() {
+        if (query) return;
+        var now = col.classList.toggle("collapsed");
+        collapsedCols[cat.key] = now;
+        lsSet(COLS_KEY, JSON.stringify(collapsedCols));
+        syncToggle();
+      }
+      colToggle.addEventListener("click", function(e){ e.stopPropagation(); toggleSection(); });
+      head.addEventListener("click", function(e){
+        if (e.target.closest(".col-folder-btn")) return;
+        if (!window.matchMedia("(max-width: 900px)").matches) return;   // side-by-side layout: nothing to fold
+        toggleSection();
+      });
+
       var unfiled = items.filter(function(t){ return !folderOf(t); });
       var rootEntries = entriesFor(null, cat.key, items).filter(function(e){
         return e.kind === "job" || !query || folderHasMatch(e.f, items);
@@ -2106,6 +2225,7 @@
   }
 
   function createFolder(catKey, parent) {
+    if (collapsedCols[catKey]) { collapsedCols[catKey] = false; lsSet(COLS_KEY, JSON.stringify(collapsedCols)); }
     if (parent && folderDepth(parent) >= MAX_FOLDER_DEPTH) { showToast("Folders can only go " + MAX_FOLDER_DEPTH + " levels deep"); return; }
     var f = { id: uid(), name: "New folder", category: catKey, parentId: parent ? parent.id : null, slot: parent ? 1000000 : 0 };
     folders.push(f);
