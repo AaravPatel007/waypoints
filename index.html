@@ -817,6 +817,7 @@
     cursor: grab;
   }
   .stage-drag-handle:hover { color: var(--ink); }
+  @media (hover: none) { .kbd-hint { display: none; } }
   .stage-edit-row input {
     flex: 1;
     font-family: inherit;
@@ -1384,7 +1385,7 @@
         <button class="icon-btn" id="themeToggle" title="Toggle light / dark" aria-label="Toggle light or dark mode">
           <span id="themeIconHolder"></span>
         </button>
-        <button class="btn btn-primary" id="addTaskBtn" aria-label="New job">
+        <button class="btn btn-primary" id="addTaskBtn" aria-label="New job" title="New job (N or Ctrl+N)">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
           <span class="btn-label">New job</span>
         </button>
@@ -1455,6 +1456,7 @@
         <div class="stage-edit-list" id="stageEditList"></div>
         <button class="add-stage-btn" id="addStageBtn">+ Add a stage</button>
         <p class="hint-text">Default pipeline: Planned → In progress → Review → Complete. Edit freely, or remove down to just one stage.</p>
+        <p class="hint-text kbd-hint">Enter in a stage adds one below it · Backspace on an empty stage removes it · Ctrl+Enter saves · Esc closes</p>
       </div>
       <div class="modal-actions">
         <button class="btn btn-ghost" id="cancelBtn">Cancel</button>
@@ -2867,6 +2869,7 @@
   }
 
   function closeModal() {
+    if (overlay.contains(document.activeElement)) document.activeElement.blur();
     overlay.classList.remove("open");
     editingId = null;
   }
@@ -2917,8 +2920,11 @@
 
       var input = document.createElement("input");
       input.type = "text";
+      input.className = "stage-name-input";
       input.value = s.name;
       input.maxLength = 40;
+      input.placeholder = "Stage name";
+      input.setAttribute("data-idx", idx);
       input.addEventListener("input", function(){ currentStages[idx].name = input.value; });
       row.appendChild(input);
 
@@ -2967,8 +2973,90 @@
   }
 
   document.getElementById("addStageBtn").addEventListener("click", function(){
-    currentStages.push({ _key: uid(), name: "New stage", state: "pending", date: null });
+    currentStages.push({ _key: uid(), name: "", state: "pending", date: null });
     renderStageEditor();
+    focusStage(currentStages.length - 1);
+  });
+
+  // ---------- keyboard shortcuts ----------
+  function focusStage(i) {
+    var el = stageEditList.querySelector('.stage-name-input[data-idx="' + i + '"]');
+    if (el) { el.focus(); try { el.setSelectionRange(el.value.length, el.value.length); } catch(err){} }
+  }
+  function insertStageAfter(i) {
+    currentStages.splice(i + 1, 0, { _key: uid(), name: "", state: "pending", date: null });
+    renderStageEditor();
+    focusStage(i + 1);
+  }
+  // Tab in the job form only visits places you type into: title, due date, notes, each stage, then Save.
+  function typingStops() {
+    var list = [titleInput, dueDateInput, notesInput];
+    Array.prototype.forEach.call(stageEditList.querySelectorAll(".stage-name-input"), function(x){ list.push(x); });
+    list.push(document.getElementById("saveBtn"));
+    return list;
+  }
+  function isTypingField(el) {
+    if (!el) return false;
+    var tag = el.tagName;
+    if (tag === "TEXTAREA" || tag === "SELECT" || el.isContentEditable) return true;
+    if (tag !== "INPUT") return false;
+    return ["button", "checkbox", "radio", "submit", "reset", "file", "range", "color"].indexOf(el.type) === -1;
+  }
+  function anyOverlayOpen() { return !!document.querySelector(".overlay.open"); }
+
+  overlay.addEventListener("keydown", function(e){
+    if (!overlay.classList.contains("open")) return;
+    var el = document.activeElement;
+    if (e.key === "Escape") { e.preventDefault(); closeModal(); return; }
+
+    if (e.key === "Tab" && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      var stops = typingStops(), i = stops.indexOf(el);
+      var n = i === -1 ? (e.shiftKey ? stops.length - 1 : 0) : i + (e.shiftKey ? -1 : 1);
+      if (n < 0) n = stops.length - 1;
+      if (n >= stops.length) n = 0;
+      e.preventDefault();
+      stops[n].focus();
+      if (stops[n].select && stops[n].type === "text") stops[n].select();
+      return;
+    }
+
+    if (e.key !== "Enter" || e.isComposing) return;
+    // Ctrl/Cmd+Enter saves from anywhere in the form.
+    if (e.ctrlKey || e.metaKey) { e.preventDefault(); document.getElementById("saveBtn").click(); return; }
+    // Enter in a stage: new stage straight underneath it.
+    if (el && el.classList.contains("stage-name-input")) {
+      e.preventDefault();
+      if (!e.shiftKey) insertStageAfter(parseInt(el.getAttribute("data-idx"), 10));
+      return;
+    }
+    if (isTypingField(el)) return;                       // title, date, notes, folder: Enter does its normal thing
+    if (el && el.id === "cancelBtn") return;             // Enter on Cancel still cancels
+    e.preventDefault();
+    document.getElementById("saveBtn").click();
+  });
+
+  // Backspace in an empty stage removes it and jumps to the one above.
+  stageEditList.addEventListener("keydown", function(e){
+    var el = e.target;
+    if (e.key !== "Backspace" || !el.classList.contains("stage-name-input") || el.value !== "") return;
+    var i = parseInt(el.getAttribute("data-idx"), 10);
+    if (currentStages.length <= 1) return;
+    e.preventDefault();
+    currentStages.splice(i, 1);
+    renderStageEditor();
+    focusStage(Math.max(0, i - 1));
+  });
+
+  // Ctrl+N (or just N when you're not typing) opens a new job.
+  document.addEventListener("keydown", function(e){
+    if (anyOverlayOpen() || e.altKey || e.isComposing) return;
+    var key = (e.key || "").toLowerCase();
+    if (key !== "n") return;
+    var ctrl = e.ctrlKey || e.metaKey;
+    if (!ctrl && (e.shiftKey || isTypingField(document.activeElement))) return;
+    if (ctrl && e.shiftKey) return;
+    e.preventDefault();
+    openModal(null);
   });
 
   document.getElementById("addTaskBtn").addEventListener("click", function(){ openModal(null); });
@@ -2978,7 +3066,8 @@
   document.getElementById("saveBtn").addEventListener("click", function(){
     var title = titleInput.value.trim();
     if (!title) { titleInput.focus(); showToast("Give the job a title first"); return; }
-    var cleanStages = currentStages
+    var kept = currentStages.filter(function(s){ return (s.name || "").trim() || s.state !== "pending"; });
+    var cleanStages = (kept.length ? kept : currentStages.slice(0, 1))
       .map(function(s){ return { name: (s.name || "").trim() || "Stage", state: s.state, date: s.date }; });
 
     if (editingId) {
