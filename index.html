@@ -757,7 +757,7 @@
   :root[data-theme="dark"] .field input[type="date"] { color-scheme: dark; }
 
   .date-input-wrap { position: relative; }
-  .date-input-wrap input[type="date"] { padding-right: 36px; }
+
   .date-input-icon {
     position: absolute;
     top: 50%;
@@ -767,16 +767,7 @@
     display: flex;
     pointer-events: none;
   }
-  .date-input-wrap input[type="date"]::-webkit-calendar-picker-indicator {
-    position: absolute;
-    right: 0;
-    top: 0;
-    width: 36px;
-    height: 100%;
-    opacity: 0;
-    cursor: pointer;
-    margin: 0;
-  }
+  .date-input-wrap input[type="date"]::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 0.6; }
 
   .cat-picker {
     display: flex;
@@ -1442,7 +1433,6 @@
         <label for="dueDateInput">Due date <span style="font-weight:400;">(optional)</span></label>
         <div class="date-input-wrap">
           <input type="date" id="dueDateInput">
-          <span class="date-input-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg></span>
         </div>
       </div>
       <div class="field">
@@ -2080,6 +2070,29 @@
     tasks.splice(insertAt, 0, draggedTask);
   }
 
+  // Move job dt into container `dest` (a folder, or null = loose in its section),
+  // just before/after `anchor` (a job in that container) or at the end if no anchor.
+  // Folder positions in both the old and the new container are kept where they appear on screen.
+  function placeJob(dt, dest, anchor, after) {
+    var cat = dt.category, src = folderOf(dt);
+    var notDt = function(e){ return !(e.kind === "job" && e.t === dt); };
+    var srcList = fullEntries(src, cat).filter(notDt);
+    var destList = dest === src ? srcList : fullEntries(dest, cat).filter(notDt);
+    var idx = destList.length;
+    if (anchor) destList.forEach(function(e, i){ if (e.kind === "job" && e.t === anchor) idx = after ? i + 1 : i; });
+    destList.splice(idx, 0, { kind: "job", t: dt });
+    // Line the tasks array up with the new on-screen order: put dt next to its neighbouring job.
+    var prev = null, next = null;
+    for (var i = idx - 1; i >= 0; i--) if (destList[i].kind === "job") { prev = destList[i].t; break; }
+    for (var j = idx + 1; j < destList.length; j++) if (destList[j].kind === "job") { next = destList[j].t; break; }
+    dt.folderId = dest ? dest.id : null;
+    if (anchor) reorderTasks(dt.id, anchor.id, after);
+    else if (prev) reorderTasks(dt.id, prev.id, true);
+    else if (next) reorderTasks(dt.id, next.id, false);
+    if (dest !== src) commitOrder(srcList);
+    commitOrder(destList);
+  }
+
   // ---------- auto-scroll while dragging a job ----------
   var dragY = null, dragScrollRaf = null;
   function dragScrollStop() {
@@ -2208,8 +2221,7 @@
         // A job dropped on empty space is taken out of its folder.
         var lastItem = unfiled.filter(function(x){ return x.id !== draggedId; }).pop();
         if (!folderOf(draggedTask) && (!lastItem || unfiled[unfiled.length - 1].id === draggedId)) return;
-        draggedTask.folderId = null;
-        if (lastItem) reorderTasks(draggedId, lastItem.id, true);
+        placeJob(draggedTask, null, null, true);
         save();
         render();
       });
@@ -2464,9 +2476,7 @@
       var dt = tasks.filter(function(x){ return x.id === draggedId; })[0];
       if (!dt || dt.category !== f.category) return;
       if (dt.folderId === f.id) return;
-      dt.folderId = f.id;
-      var last = tasks.filter(function(x){ return x.id !== dt.id && folderOf(x) === f; }).pop();
-      if (last) reorderTasks(dt.id, last.id, true);
+      placeJob(dt, f, null, true);
       save();
       render();
     });
@@ -2691,9 +2701,7 @@
       if (!draggedTask || draggedTask.category !== t.category) return;
       var rect = card.getBoundingClientRect();
       var before = (e.clientY - rect.top) < rect.height / 2;
-      var targetFolder = folderOf(t);
-      draggedTask.folderId = targetFolder ? targetFolder.id : null;
-      reorderTasks(draggedId, t.id, !before);
+      placeJob(draggedTask, folderOf(t), t, !before);
       save();
       render();
     });
